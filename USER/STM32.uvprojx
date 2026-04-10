@@ -11,7 +11,7 @@
       <ToolsetNumber>0x4</ToolsetNumber>
       <ToolsetName>ARM-ADS</ToolsetName>
       <pArmCC>5060960::V5.06 update 7 (build 960)::.\ARMCC</pArmCC>
-      <pCCUsed>6140001::V6.14.1::ARMCLANG</pCCUsed>
+      <pCCUsed>5060960::V5.06 update 7 (build 960)::.\ARMCC</pCCUsed>
       <uAC6>0</uAC6>
       <TargetOption>
         <TargetCommonOption>
@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>STM32F10X_HD,USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>..\USER;..\CORE;..\FWLIB\inc;..\SYSTEM\delay;..\SYSTEM\sys;..\SYSTEM\usart</IncludePath>
+              <IncludePath>..\USER;..\CORE;..\FWLIB\inc;..\SYSTEM\delay;..\SYSTEM\sys;..\SYSTEM\usart;..\HARDWARE\BUZZER;..\HARDWARE\KEY;..\HARDWARE\LED</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -558,6 +558,23 @@
         </Group>
         <Group>
           <GroupName>HARDWARE</GroupName>
+          <Files>
+            <File>
+              <FileName>buzzer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\BUZZER\buzzer.c</FilePath>
+            </File>
+            <File>
+              <FileName>key.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\KEY\key.c</FilePath>
+            </File>
+            <File>
+              <FileName>led.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\LED\led.c</FilePath>
+            </File>
+          </Files>
         </Group>
       </Groups>
     </Target>

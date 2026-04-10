@@ -28,3 +28,8 @@
 .\objects\main.o: ..\FWLIB\inc\stm32f10x_usart.h
 .\objects\main.o: ..\FWLIB\inc\stm32f10x_wwdg.h
 .\objects\main.o: ..\FWLIB\inc\misc.h
+.\objects\main.o: ..\SYSTEM\delay\delay.h
+.\objects\main.o: ..\SYSTEM\sys\sys.h
+.\objects\main.o: ..\HARDWARE\LED\led.h
+.\objects\main.o: ..\HARDWARE\KEY\key.h
+.\objects\main.o: ..\HARDWARE\BUZZER\buzzer.h
