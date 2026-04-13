@@ -33,3 +33,5 @@
 .\objects\main.o: ..\HARDWARE\LED\led.h
 .\objects\main.o: ..\HARDWARE\KEY\key.h
 .\objects\main.o: ..\HARDWARE\BUZZER\buzzer.h
+.\objects\main.o: ..\HARDWARE\HCSR04\hcsr04.h
+.\objects\main.o: ..\HARDWARE\OLED\oled.h
