@@ -35,7 +35,7 @@ I (..\SYSTEM\sys\sys.h)(0x550F951A)
 I (..\HARDWARE\LED\led.h)(0x69D8F2FC)
 I (..\HARDWARE\KEY\key.h)(0x69D8F321)
 I (..\HARDWARE\BUZZER\buzzer.h)(0x69D8F342)
-I (..\HARDWARE\HCSR04\hcsr04.h)(0x69DC8902)
+I (..\HARDWARE\HCSR04\hcsr04.h)(0x69DC92ED)
 I (..\HARDWARE\OLED\oled.h)(0x69DC8CDF)
 F (.\stm32f10x_it.c)(0x4D99A59E)(-c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I ..\USER -I ..\CORE -I ..\FWLIB\inc -I ..\SYSTEM\delay -I ..\SYSTEM\sys -I ..\SYSTEM\usart -I ..\HARDWARE\BUZZER -I ..\HARDWARE\KEY -I ..\HARDWARE\LED -I ..\HARDWARE\HCSR04 -I ..\HARDWARE\OLED-IC:\Users\JBB\AppData\Local\Arm\Packs\Keil\STM32F1xx_DFP\2.2.0\Device\Include-IC:\Keil_v5\ARM\CMSIS\Include-D__UVISION_VERSION="532" -DSTM32F10X_HD -DSTM32F10X_HD -DUSE_STDPERIPH_DRIVER-o .\objects\stm32f10x_it.o --omf_browse .\objects\stm32f10x_it.crf --depend .\objects\stm32f10x_it.d)
 I (stm32f10x_it.h)(0x4D99A59E)
@@ -953,8 +953,8 @@ I (..\FWLIB\inc\stm32f10x_tim.h)(0x4D783BB4)
 I (..\FWLIB\inc\stm32f10x_usart.h)(0x4D783BB4)
 I (..\FWLIB\inc\stm32f10x_wwdg.h)(0x4D783BB4)
 I (..\FWLIB\inc\misc.h)(0x4D783BB4)
-F (..\HARDWARE\HCSR04\hcsr04.c)(0x69DC88FA)(-c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I ..\USER -I ..\CORE -I ..\FWLIB\inc -I ..\SYSTEM\delay -I ..\SYSTEM\sys -I ..\SYSTEM\usart -I ..\HARDWARE\BUZZER -I ..\HARDWARE\KEY -I ..\HARDWARE\LED -I ..\HARDWARE\HCSR04 -I ..\HARDWARE\OLED-IC:\Users\JBB\AppData\Local\Arm\Packs\Keil\STM32F1xx_DFP\2.2.0\Device\Include-IC:\Keil_v5\ARM\CMSIS\Include-D__UVISION_VERSION="532" -DSTM32F10X_HD -DSTM32F10X_HD -DUSE_STDPERIPH_DRIVER-o .\objects\hcsr04.o --omf_browse .\objects\hcsr04.crf --depend .\objects\hcsr04.d)
-I (..\HARDWARE\HCSR04\hcsr04.h)(0x69DC8902)
+F (..\HARDWARE\HCSR04\hcsr04.c)(0x69DC9302)(-c --cpu Cortex-M3 -D__EVAL -g -O0 --apcs=interwork --split_sections -I ..\USER -I ..\CORE -I ..\FWLIB\inc -I ..\SYSTEM\delay -I ..\SYSTEM\sys -I ..\SYSTEM\usart -I ..\HARDWARE\BUZZER -I ..\HARDWARE\KEY -I ..\HARDWARE\LED -I ..\HARDWARE\HCSR04 -I ..\HARDWARE\OLED-IC:\Users\JBB\AppData\Local\Arm\Packs\Keil\STM32F1xx_DFP\2.2.0\Device\Include-IC:\Keil_v5\ARM\CMSIS\Include-D__UVISION_VERSION="532" -DSTM32F10X_HD -DSTM32F10X_HD -DUSE_STDPERIPH_DRIVER-o .\objects\hcsr04.o --omf_browse .\objects\hcsr04.crf --depend .\objects\hcsr04.d)
+I (..\HARDWARE\HCSR04\hcsr04.h)(0x69DC92ED)
 I (..\USER\stm32f10x.h)(0x4D783CB4)
 I (..\CORE\core_cm3.h)(0x4D523B58)
 I (C:\Keil_v5\ARM\ARMCC\include\stdint.h)(0x5F63877C)
