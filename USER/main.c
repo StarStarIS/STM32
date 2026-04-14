@@ -6,6 +6,7 @@
 #include "buzzer.h"
 #include "hcsr04.h"
 #include "oled.h"
+#include "light.h"
 
 typedef enum
 {
@@ -75,10 +76,63 @@ static void ReverseAlarm_ByDistance(u16 distance_cm)
     }
 }
 
+static u8 GetLightLevel(u16 light_raw)
+{
+    /*
+     * 先给一组“能跑起来”的初始阈值：
+     * ADC大 -> 更暗
+     * ADC小 -> 更亮
+     *
+     * 一级：暗   -> RLED
+     * 二级：中   -> GLED
+     * 三级：亮   -> BLED
+     *
+     * 后面你上板后我们再按实测值微调。
+     */
+    if(light_raw > 750)
+    {
+        return 1;
+    }
+    else if(light_raw >= 400)
+    {
+        return 2;
+    }
+    else
+    {
+        return 3;
+    }
+}
+
+static void LightLevel_Indicate(u8 level)
+{
+    LED_AllOff();
+    BUZZER_Off();
+
+    switch(level)
+    {
+        case 1:
+            LED_R_On();
+            break;
+
+        case 2:
+            LED_G_On();
+            break;
+
+        case 3:
+            LED_B_On();
+            break;
+
+        default:
+            break;
+    }
+}
+
 int main(void)
 {
     u8 key_value = KEY_NONE;
     u16 distance_cm = HCSR04_INVALID_DISTANCE;
+    u16 light_raw = 0;
+    u8 light_level = 0;
     SystemMode_t mode = MODE_IDLE;
 
     delay_init();
@@ -88,10 +142,11 @@ int main(void)
     BUZZER_Init();
     HCSR04_Init();
     OLED_Init();
+    LIGHT_Init();
 
     LED_AllOff();
     BUZZER_Off();
-    OLED_ShowStatus(HCSR04_INVALID_DISTANCE, 0);
+    OLED_ShowLightStatus(0, 0);
 
     while(1)
     {
@@ -116,10 +171,14 @@ int main(void)
         switch(mode)
         {
             case MODE_IDLE:
-                LED_AllOff();
-                BUZZER_Off();
-                OLED_ShowStatus(HCSR04_INVALID_DISTANCE, 0);
-                delay_ms(50);
+                /* 非倒车模式下，做环境光检测 */
+                light_raw = LIGHT_ReadAverage(8);
+                light_level = GetLightLevel(light_raw);
+
+                LightLevel_Indicate(light_level);
+                OLED_ShowLightStatus(light_raw, light_level);
+
+                delay_ms(100);
                 break;
 
             case MODE_REVERSE:

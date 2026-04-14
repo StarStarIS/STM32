@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>STM32F10X_HD,USE_STDPERIPH_DRIVER</Define>
               <Undefine></Undefine>
-              <IncludePath>..\USER;..\CORE;..\FWLIB\inc;..\SYSTEM\delay;..\SYSTEM\sys;..\SYSTEM\usart;..\HARDWARE\BUZZER;..\HARDWARE\KEY;..\HARDWARE\LED;..\HARDWARE\HCSR04;..\HARDWARE\OLED</IncludePath>
+              <IncludePath>..\USER;..\CORE;..\FWLIB\inc;..\SYSTEM\delay;..\SYSTEM\sys;..\SYSTEM\usart;..\HARDWARE\BUZZER;..\HARDWARE\KEY;..\HARDWARE\LED;..\HARDWARE\HCSR04;..\HARDWARE\OLED;..\HARDWARE\LIGHT</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -583,6 +583,11 @@
               <FileName>oled.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\HARDWARE\OLED\oled.c</FilePath>
+            </File>
+            <File>
+              <FileName>light.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\HARDWARE\LIGHT\light.c</FilePath>
             </File>
           </Files>
         </Group>

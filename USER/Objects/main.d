@@ -35,3 +35,4 @@
 .\objects\main.o: ..\HARDWARE\BUZZER\buzzer.h
 .\objects\main.o: ..\HARDWARE\HCSR04\hcsr04.h
 .\objects\main.o: ..\HARDWARE\OLED\oled.h
+.\objects\main.o: ..\HARDWARE\LIGHT\light.h

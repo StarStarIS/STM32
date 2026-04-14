@@ -138,6 +138,7 @@ static void OLED_ShowChar6x8(u8 x, u8 page, char ch)
     static const u8 font_minus[6] = {0x08,0x08,0x08,0x08,0x08,0x00};
     static const u8 font_colon[6] = {0x00,0x36,0x36,0x00,0x00,0x00};
 
+    static const u8 font_A[6]     = {0x7E,0x09,0x09,0x09,0x7E,0x00};
     static const u8 font_D[6]     = {0x7F,0x41,0x41,0x22,0x1C,0x00};
     static const u8 font_L[6]     = {0x7F,0x40,0x40,0x40,0x40,0x00};
 
@@ -157,6 +158,7 @@ static void OLED_ShowChar6x8(u8 x, u8 page, char ch)
         case ' ': p = font_space; break;
         case '-': p = font_minus; break;
         case ':': p = font_colon; break;
+        case 'A': p = font_A; break;
         case 'D': p = font_D; break;
         case 'L': p = font_L; break;
         case '0': p = font_0; break;
@@ -208,6 +210,31 @@ static void OLED_Show3Digit(u8 x, u8 page, u16 num)
     OLED_ShowChar6x8(x + 12, page, ones + '0');
 }
 
+static void OLED_Show4Digit(u8 x, u8 page, u16 num)
+{
+    u8 thousands, hundreds, tens, ones;
+
+    if(num > 9999) num = 9999;
+
+    thousands = num / 1000;
+    hundreds  = (num / 100) % 10;
+    tens      = (num / 10) % 10;
+    ones      = num % 10;
+
+    if(thousands == 0) OLED_ShowChar6x8(x,      page, ' ');
+    else               OLED_ShowChar6x8(x,      page, thousands + '0');
+
+    if((thousands == 0) && (hundreds == 0)) OLED_ShowChar6x8(x + 6,  page, ' ');
+    else                                    OLED_ShowChar6x8(x + 6,  page, hundreds + '0');
+
+    if((thousands == 0) && (hundreds == 0) && (tens == 0))
+        OLED_ShowChar6x8(x + 12, page, ' ');
+    else
+        OLED_ShowChar6x8(x + 12, page, tens + '0');
+
+    OLED_ShowChar6x8(x + 18, page, ones + '0');
+}
+
 static void OLED_ShowDash3(u8 x, u8 page)
 {
     OLED_ShowChar6x8(x,      page, '-');
@@ -229,6 +256,29 @@ void OLED_ShowStatus(u16 distance_cm, u8 level)
     OLED_ShowStr6x8(0, 2, "L:");
     if(level <= 9) OLED_ShowChar6x8(18, 2, level + '0');
     else           OLED_ShowChar6x8(18, 2, '-');
+
+    OLED_ShowStr6x8(24, 2, "      ");
+}
+
+void OLED_ShowLightStatus(u16 light_raw, u8 level)
+{
+    /* 第1行：A:xxxx */
+    OLED_ShowStr6x8(0, 0, "A:");
+    OLED_Show4Digit(18, 0, light_raw);
+
+    /* 清掉后面残留 */
+    OLED_ShowStr6x8(42, 0, "    ");
+
+    /* 第3行：L:x */
+    OLED_ShowStr6x8(0, 2, "L:");
+    if((level >= 1) && (level <= 3))
+    {
+        OLED_ShowChar6x8(18, 2, level + '0');
+    }
+    else
+    {
+        OLED_ShowChar6x8(18, 2, '-');
+    }
 
     OLED_ShowStr6x8(24, 2, "      ");
 }
