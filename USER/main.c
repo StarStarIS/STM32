@@ -7,6 +7,8 @@
 #include "hcsr04.h"
 #include "oled.h"
 #include "light.h"
+#include "usart.h"
+#include "dht11.h"
 
 typedef enum
 {
@@ -130,6 +132,9 @@ static void LightLevel_Indicate(u8 level)
 int main(void)
 {
     u8 key_value = KEY_NONE;
+    u8 temperature = 0;
+    u8 humidity = 0;
+    u8 dht11_send_div = 0;
     u16 distance_cm = HCSR04_INVALID_DISTANCE;
     u16 light_raw = 0;
     u8 light_level = 0;
@@ -143,10 +148,15 @@ int main(void)
     HCSR04_Init();
     OLED_Init();
     LIGHT_Init();
+    uart_init(115200);
+    DHT11_Init();
 
     LED_AllOff();
     BUZZER_Off();
     OLED_ShowLightStatus(0, 0);
+
+    delay_ms(1200);
+    printf("System Ready\r\n");
 
     while(1)
     {
@@ -177,6 +187,21 @@ int main(void)
 
                 LightLevel_Indicate(light_level);
                 OLED_ShowLightStatus(light_raw, light_level);
+
+                dht11_send_div++;
+                if(dht11_send_div >= 10)
+                {
+                    dht11_send_div = 0;
+                    
+                    if(DHT11_ReadData(&temperature, &humidity) == DHT11_OK)
+                    {
+                        printf("Temp: %dC, Humi: %d%%\r\n", temperature, humidity);
+                    }
+                    else
+                    {
+                        printf("DHT11 read fail\r\n");
+                    }
+                }
 
                 delay_ms(100);
                 break;
