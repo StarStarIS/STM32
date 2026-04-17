@@ -9,6 +9,7 @@
 #include "light.h"
 #include "usart.h"
 #include "dht11.h"
+#include <stdio.h>
 #include <string.h>
 
 typedef enum
@@ -16,6 +17,13 @@ typedef enum
     MODE_IDLE = 0,
     MODE_REVERSE
 } SystemMode_t;
+
+#define WIFI_USE_EN_PIN      1
+#define WIFI_START_DELAY_S   10
+#define WIFI_SSID            "StarIS Xiaomi 17 Pro"
+#define WIFI_PASSWORD        "1234abcd"
+#define WIFI_SERVER_IP       "10.160.155.95"
+#define WIFI_SERVER_PORT     9080
 
 static u8 GetAlarmLevel(u16 distance_cm)
 {
@@ -37,10 +45,8 @@ static u8 GetAlarmLevel(u16 distance_cm)
     }
 }
 
-/* 根据距离进行分级声光报警 */
 static void ReverseAlarm_ByDistance(u16 distance_cm)
 {
-    /* 无效值或者距离较远：绿色灯亮，蜂鸣器不响 */
     if((distance_cm == HCSR04_INVALID_DISTANCE) || (distance_cm > 100))
     {
         LED_AllOff();
@@ -48,7 +54,6 @@ static void ReverseAlarm_ByDistance(u16 distance_cm)
         BUZZER_Off();
         delay_ms(80);
     }
-    /* 50cm ~ 100cm：蓝灯亮，慢速间歇响 */
     else if(distance_cm > 50)
     {
         LED_AllOff();
@@ -59,7 +64,6 @@ static void ReverseAlarm_ByDistance(u16 distance_cm)
         BUZZER_Off();
         delay_ms(440);
     }
-    /* 20cm ~ 50cm：红灯亮，快速间歇响 */
     else if(distance_cm > 20)
     {
         LED_AllOff();
@@ -70,7 +74,6 @@ static void ReverseAlarm_ByDistance(u16 distance_cm)
         BUZZER_Off();
         delay_ms(170);
     }
-    /* <= 20cm：三色灯全亮，蜂鸣器连续响 */
     else
     {
         LED_AllOn();
@@ -81,17 +84,6 @@ static void ReverseAlarm_ByDistance(u16 distance_cm)
 
 static u8 GetLightLevel(u16 light_raw)
 {
-    /*
-     * 先给一组“能跑起来”的初始阈值：
-     * ADC大 -> 更暗
-     * ADC小 -> 更亮
-     *
-     * 一级：暗   -> RLED
-     * 二级：中   -> GLED
-     * 三级：亮   -> BLED
-     *
-     * 后面你上板后我们再按实测值微调。
-     */
     if(light_raw > 750)
     {
         return 1;
@@ -130,88 +122,226 @@ static void LightLevel_Indicate(u8 level)
     }
 }
 
-static void WiFi_SendCmd(char *cmd)
+static u8 WiFi_BufferHas(const char *keyword)
 {
-    USART2_ClearBuf();
-    printf("\r\n[STM32->WiFi] %s", cmd);   // 打印到电脑串口看
-    USART2_SendString(cmd);
+    if(keyword == 0)
+    {
+        return 0;
+    }
+
+    return (strstr((char *)USART2_RX_BUF, keyword) != 0);
 }
 
-static u8 WiFi_WaitFor(char *keyword, u32 timeout_ms)
+static void WiFi_PrintLastReply(const char *stage)
+{
+    printf("\r\n[%s reply]\r\n%s\r\n", stage, (char *)USART2_RX_BUF);
+}
+
+static void WiFi_DelayWithDebug(u32 total_ms)
+{
+    u32 elapsed = 0;
+
+    while(elapsed < total_ms)
+    {
+        USART2_DebugFlushToUSART1();
+        delay_ms(10);
+        elapsed += 10;
+    }
+
+    USART2_DebugFlushToUSART1();
+}
+
+static void WiFi_SendCmd(const char *cmd)
+{
+    USART2_ClearBuf();
+    USART2_DebugFlushToUSART1();
+    printf("\r\n[STM32->WiFi] %s", cmd);
+    USART2_SendString((char *)cmd);
+}
+
+static u8 WiFi_WaitFor(const char *keyword, u32 timeout_ms)
 {
     u32 t = 0;
 
     while(t < timeout_ms)
     {
-        if(strstr((char *)USART2_RX_BUF, keyword) != NULL)
+        USART2_DebugFlushToUSART1();
+
+        if(WiFi_BufferHas(keyword))
         {
             return 1;
         }
+
         delay_ms(10);
         t += 10;
     }
+
+    USART2_DebugFlushToUSART1();
+    return 0;
+}
+
+static u8 WiFi_WaitForAny(u32 timeout_ms, const char *keyword1, const char *keyword2, const char *keyword3)
+{
+    u32 t = 0;
+
+    while(t < timeout_ms)
+    {
+        USART2_DebugFlushToUSART1();
+
+        if(WiFi_BufferHas(keyword1) || WiFi_BufferHas(keyword2) || WiFi_BufferHas(keyword3))
+        {
+            return 1;
+        }
+
+        if(WiFi_BufferHas("ERROR") || WiFi_BufferHas("+CME ERROR"))
+        {
+            return 0;
+        }
+
+        delay_ms(10);
+        t += 10;
+    }
+
+    USART2_DebugFlushToUSART1();
+    return 0;
+}
+
+static u8 WiFi_CheckATReady(void)
+{
+    u8 try_cnt;
+
+    for(try_cnt = 0; try_cnt < 5; try_cnt++)
+    {
+        WiFi_SendCmd("AT\r\n");
+        if(WiFi_WaitForAny(1200, "OK", "ready", 0))
+        {
+            printf("\r\nAT OK\r\n");
+            return 1;
+        }
+
+        WiFi_DelayWithDebug(300);
+    }
+
+    printf("\r\nAT no response!\r\n");
+    WiFi_PrintLastReply("AT");
+    return 0;
+}
+
+static u8 WiFi_WaitForGotIP(u32 timeout_ms)
+{
+    u32 t = 0;
+
+    while(t < timeout_ms)
+    {
+        USART2_DebugFlushToUSART1();
+
+        if(WiFi_BufferHas("WIFI_GOT_IP"))
+        {
+            return 1;
+        }
+
+        if(WiFi_BufferHas("WIFI_DISCONNECT") || WiFi_BufferHas("ERROR") || WiFi_BufferHas("+CME ERROR"))
+        {
+            return 0;
+        }
+
+        delay_ms(10);
+        t += 10;
+    }
+
+    USART2_DebugFlushToUSART1();
     return 0;
 }
 
 static u8 WiFi_Init_And_Send12345(void)
 {
-    printf("\r\n===== WiFi Start =====\r\n");
+    char cmd[128];
 
+    printf("\r\n===== WiFi Start =====\r\n");
+    printf("SSID  : %s\r\n", WIFI_SSID);
+    printf("Server: %s:%d\r\n", WIFI_SERVER_IP, WIFI_SERVER_PORT);
+
+#if WIFI_USE_EN_PIN
     WiFi_EN_Init();
     WiFi_EN_Off();
     delay_ms(200);
-    WiFi_EN_On();           // PB12拉高，WiFi开始工作
-    delay_ms(2000);
+    WiFi_EN_On();
+#endif
+    WiFi_DelayWithDebug(2000);
 
-    // 1. 试探AT
-    WiFi_SendCmd("AT\r\n");
-    if(!WiFi_WaitFor("OK", 1000))
+    if(!WiFi_CheckATReady())
     {
-        printf("\r\nAT no response!\r\n");
         return 0;
     }
-    printf("\r\nAT OK\r\n");
 
-    // 2. 设为 STA 模式
     WiFi_SendCmd("AT+WMODE=1,1\r\n");
     if(!WiFi_WaitFor("OK", 1000))
     {
         printf("\r\nWMODE failed!\r\n");
+        WiFi_PrintLastReply("WMODE");
         return 0;
     }
     printf("\r\nWMODE OK\r\n");
 
-    // 3. 连接路由器
-    // 这里把你的WiFi名和密码改掉
-    WiFi_SendCmd("AT+WJAP=\"StarIS Xiaomi 17 Pro\",\"1234abcd\"\r\n");
-    if(!(WiFi_WaitFor("WIFI_GOT_IP", 15000) || WiFi_WaitFor("OK", 15000)))
+    sprintf(cmd, "AT+WJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
+    WiFi_SendCmd(cmd);
+    if(!WiFi_WaitForAny(15000, "WIFI_CONNECT", "WIFI_GOT_IP", "OK"))
+    {
+        printf("\r\nWJAP no response!\r\n");
+        WiFi_PrintLastReply("WJAP");
+        return 0;
+    }
+    if(WiFi_BufferHas("ERROR") || WiFi_BufferHas("+CME ERROR"))
+    {
+        printf("\r\nWJAP command failed!\r\n");
+        WiFi_PrintLastReply("WJAP");
+        return 0;
+    }
+    printf("\r\nWJAP accepted, wait for IP...\r\n");
+
+    if(!WiFi_WaitForGotIP(25000))
     {
         printf("\r\nWIFI connect failed!\r\n");
+        printf("Please check SSID/password, hotspot status, and whether the module can see this hotspot.\r\n");
+        WiFi_PrintLastReply("WJAP");
         return 0;
     }
     printf("\r\nWiFi connected\r\n");
 
-    // 4. 创建 TCP Client
-    // 这里把 IP 改成你电脑的 IPv4 地址
-    WiFi_SendCmd("AT+SOCKET=4,10.160.155.95,9080,0,1\r\n");
-    if(!(WiFi_WaitFor("connect success", 5000) || WiFi_WaitFor("OK", 5000)))
+    sprintf(cmd, "AT+SOCKET=4,%s,%d,0,1\r\n", WIFI_SERVER_IP, WIFI_SERVER_PORT);
+    WiFi_SendCmd(cmd);
+    if(!WiFi_WaitForAny(5000, "connect success", "ConID=1", 0))
     {
         printf("\r\nSOCKET create failed!\r\n");
+        WiFi_PrintLastReply("SOCKET");
         return 0;
     }
     printf("\r\nSOCKET connected\r\n");
 
-    // 5. 发送 12345
     WiFi_SendCmd("AT+SOCKETSENDLINE=1,5,12345\r\n");
     if(!WiFi_WaitFor("OK", 3000))
     {
         printf("\r\nSend 12345 failed!\r\n");
+        WiFi_PrintLastReply("SOCKETSENDLINE");
         return 0;
     }
 
     printf("\r\nSend 12345 success!\r\n");
     printf("\r\n===== WiFi Done =====\r\n");
     return 1;
+}
+
+static void Boot_WaitBeforeWiFi(void)
+{
+    u8 sec;
+
+    printf("\r\nPower-on delay: wait %d s before WiFi start.\r\n", WIFI_START_DELAY_S);
+
+    for(sec = WIFI_START_DELAY_S; sec > 0; sec--)
+    {
+        printf("WiFi starts in %d s\r\n", sec);
+        delay_ms(1000);
+    }
 }
 
 int main(void)
@@ -236,8 +366,9 @@ int main(void)
     uart_init(115200);
     uart2_init(115200);
     delay_ms(500);
-    WiFi_Init_And_Send12345();
     DHT11_Init();
+    Boot_WaitBeforeWiFi();
+    WiFi_Init_And_Send12345();
 
     LED_AllOff();
     BUZZER_Off();
@@ -248,9 +379,9 @@ int main(void)
 
     while(1)
     {
+        USART2_DebugFlushToUSART1();
         key_value = KEY_Scan();
 
-        /* KEY1：进入/退出倒车模式 */
         if(key_value == KEY1_PRESS)
         {
             if(mode == MODE_IDLE)
@@ -269,7 +400,6 @@ int main(void)
         switch(mode)
         {
             case MODE_IDLE:
-                /* 非倒车模式下，做环境光检测 */
                 light_raw = LIGHT_ReadAverage(8);
                 light_level = GetLightLevel(light_raw);
 
@@ -280,7 +410,7 @@ int main(void)
                 if(dht11_send_div >= 10)
                 {
                     dht11_send_div = 0;
-                    
+
                     if(DHT11_ReadData(&temperature, &humidity) == DHT11_OK)
                     {
                         printf("Temp: %dC, Humi: %d%%\r\n", temperature, humidity);
