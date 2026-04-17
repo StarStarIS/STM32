@@ -9,6 +9,7 @@
 #include "light.h"
 #include "usart.h"
 #include "dht11.h"
+#include <string.h>
 
 typedef enum
 {
@@ -129,6 +130,90 @@ static void LightLevel_Indicate(u8 level)
     }
 }
 
+static void WiFi_SendCmd(char *cmd)
+{
+    USART2_ClearBuf();
+    printf("\r\n[STM32->WiFi] %s", cmd);   // 打印到电脑串口看
+    USART2_SendString(cmd);
+}
+
+static u8 WiFi_WaitFor(char *keyword, u32 timeout_ms)
+{
+    u32 t = 0;
+
+    while(t < timeout_ms)
+    {
+        if(strstr((char *)USART2_RX_BUF, keyword) != NULL)
+        {
+            return 1;
+        }
+        delay_ms(10);
+        t += 10;
+    }
+    return 0;
+}
+
+static u8 WiFi_Init_And_Send12345(void)
+{
+    printf("\r\n===== WiFi Start =====\r\n");
+
+    WiFi_EN_Init();
+    WiFi_EN_Off();
+    delay_ms(200);
+    WiFi_EN_On();           // PB12拉高，WiFi开始工作
+    delay_ms(2000);
+
+    // 1. 试探AT
+    WiFi_SendCmd("AT\r\n");
+    if(!WiFi_WaitFor("OK", 1000))
+    {
+        printf("\r\nAT no response!\r\n");
+        return 0;
+    }
+    printf("\r\nAT OK\r\n");
+
+    // 2. 设为 STA 模式
+    WiFi_SendCmd("AT+WMODE=1,1\r\n");
+    if(!WiFi_WaitFor("OK", 1000))
+    {
+        printf("\r\nWMODE failed!\r\n");
+        return 0;
+    }
+    printf("\r\nWMODE OK\r\n");
+
+    // 3. 连接路由器
+    // 这里把你的WiFi名和密码改掉
+    WiFi_SendCmd("AT+WJAP=\"StarIS Xiaomi 17 Pro\",\"1234abcd\"\r\n");
+    if(!(WiFi_WaitFor("WIFI_GOT_IP", 15000) || WiFi_WaitFor("OK", 15000)))
+    {
+        printf("\r\nWIFI connect failed!\r\n");
+        return 0;
+    }
+    printf("\r\nWiFi connected\r\n");
+
+    // 4. 创建 TCP Client
+    // 这里把 IP 改成你电脑的 IPv4 地址
+    WiFi_SendCmd("AT+SOCKET=4,10.160.155.95,9080,0,1\r\n");
+    if(!(WiFi_WaitFor("connect success", 5000) || WiFi_WaitFor("OK", 5000)))
+    {
+        printf("\r\nSOCKET create failed!\r\n");
+        return 0;
+    }
+    printf("\r\nSOCKET connected\r\n");
+
+    // 5. 发送 12345
+    WiFi_SendCmd("AT+SOCKETSENDLINE=1,5,12345\r\n");
+    if(!WiFi_WaitFor("OK", 3000))
+    {
+        printf("\r\nSend 12345 failed!\r\n");
+        return 0;
+    }
+
+    printf("\r\nSend 12345 success!\r\n");
+    printf("\r\n===== WiFi Done =====\r\n");
+    return 1;
+}
+
 int main(void)
 {
     u8 key_value = KEY_NONE;
@@ -149,6 +234,9 @@ int main(void)
     OLED_Init();
     LIGHT_Init();
     uart_init(115200);
+    uart2_init(115200);
+    delay_ms(500);
+    WiFi_Init_And_Send12345();
     DHT11_Init();
 
     LED_AllOff();

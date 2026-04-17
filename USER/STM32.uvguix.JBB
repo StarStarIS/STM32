@@ -93,8 +93,8 @@
       <flags>2</flags>
       <showCmd>3</showCmd>
       <MinPosition>
-        <xPos>-1</xPos>
-        <yPos>-1</yPos>
+        <xPos>-32000</xPos>
+        <yPos>-32000</yPos>
       </MinPosition>
       <MaxPosition>
         <xPos>-1</xPos>
@@ -1865,9 +1865,9 @@
       <ActiveTab>0</ActiveTab>
       <Doc>
         <Name>.\main.c</Name>
-        <ColumnNumber>6</ColumnNumber>
-        <TopLine>84</TopLine>
-        <CurrentLine>91</CurrentLine>
+        <ColumnNumber>49</ColumnNumber>
+        <TopLine>179</TopLine>
+        <CurrentLine>196</CurrentLine>
         <Folding>1</Folding>
         <ContractedFolders></ContractedFolders>
         <PaneID>0</PaneID>
@@ -1938,7 +1938,7 @@
       <Doc>
         <Name>..\HARDWARE\DHT11\dht11.c</Name>
         <ColumnNumber>0</ColumnNumber>
-        <TopLine>85</TopLine>
+        <TopLine>1</TopLine>
         <CurrentLine>1</CurrentLine>
         <Folding>1</Folding>
         <ContractedFolders></ContractedFolders>

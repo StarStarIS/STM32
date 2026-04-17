@@ -39,3 +39,4 @@
 .\objects\main.o: ..\SYSTEM\usart\usart.h
 .\objects\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
 .\objects\main.o: ..\HARDWARE\DHT11\dht11.h
+.\objects\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
