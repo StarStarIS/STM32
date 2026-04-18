@@ -44,8 +44,8 @@ typedef struct
 #define DETECT_PERIOD_MS               2000
 #define LOOP_DELAY_MS                  50
 #define WIFI_RETRY_PERIOD_MS           15000
-#define LIGHT_NIGHT_ENTER_THRESHOLD    700
-#define LIGHT_DAY_ENTER_THRESHOLD      600
+#define LIGHT_NIGHT_ENTER_THRESHOLD    2000
+#define LIGHT_DAY_ENTER_THRESHOLD      2000
 #define DISTANCE_OUTLIER_CM            50
 
 #define DAY_WARN_THRESHOLD_CM          200
@@ -105,6 +105,32 @@ static u8 ToUpperAscii(u8 ch)
     }
 
     return ch;
+}
+
+static u8 ParseU16(const char *text, u16 *value)
+{
+    u32 result = 0;
+    u8 has_digit = 0;
+
+    if((text == 0) || (value == 0))
+    {
+        return 0;
+    }
+
+    while((*text >= '0') && (*text <= '9'))
+    {
+        result = result * 10 + (u32)(*text - '0');
+        text++;
+        has_digit = 1;
+    }
+
+    if(has_digit == 0)
+    {
+        return 0;
+    }
+
+    *value = (u16)result;
+    return 1;
 }
 
 static void LocalIndicator_Update(const SecurityState_t *state)
@@ -226,6 +252,15 @@ static u8 WiFi_TryGetLine(char *line, u16 line_len)
     return 0;
 }
 
+static void WiFi_RequestSocketRead(u8 con_id)
+{
+    char cmd[32];
+
+    sprintf(cmd, "AT+SOCKETREAD=%u\r\n", con_id);
+    printf("[STM32->WiFi] %s", cmd);
+    USART2_SendString(cmd);
+}
+
 static void WiFi_ParseSocketData(const char *data)
 {
     char cmd[24];
@@ -246,17 +281,55 @@ static void WiFi_ParseSocketData(const char *data)
     if(strcmp(cmd, "MUTE") == 0)
     {
         g_remote_mute_req = 1;
+        printf("Remote command accepted: MUTE\r\n");
     }
     else if(strcmp(cmd, "RESET") == 0)
     {
         g_remote_reset_req = 1;
+        printf("Remote command accepted: RESET\r\n");
+    }
+}
+
+static void WiFi_ParseSocketReadLine(const char *line)
+{
+    const char *data_ptr;
+    const char *prefix_colon = "+SOCKETREAD:";
+    const char *prefix_comma = "+SOCKETREAD,";
+    u8 comma_cnt = 0;
+
+    data_ptr = line;
+    if(strstr(line, prefix_colon) == line)
+    {
+        data_ptr = line + strlen(prefix_colon);
+    }
+    else if(strstr(line, prefix_comma) == line)
+    {
+        data_ptr = line + strlen(prefix_comma);
+    }
+
+    while(*data_ptr != '\0')
+    {
+        if(*data_ptr == ',')
+        {
+            comma_cnt++;
+            if(comma_cnt == 2)
+            {
+                data_ptr++;
+                WiFi_ParseSocketData(data_ptr);
+                return;
+            }
+        }
+        data_ptr++;
     }
 }
 
 static void WiFi_ProcessLine(const char *line)
 {
     const char *data_ptr = 0;
+    const char *prefix = "+EVENT:SocketDown,";
     u8 comma_cnt = 0;
+    u16 con_id_value = 0;
+    u8 con_id = 0;
 
     if((line == 0) || (line[0] == '\0'))
     {
@@ -281,8 +354,26 @@ static void WiFi_ProcessLine(const char *line)
         g_wifi_socket_connected = 0;
     }
 
-    if(strstr(line, "+EVENT:SocketDown,") == line)
+    if((strstr(line, "+SOCKETREAD:") == line) || (strstr(line, "+SOCKETREAD,") == line))
     {
+        WiFi_ParseSocketReadLine(line);
+        return;
+    }
+
+    if((strcmp(line, "MUTE") == 0) || (strcmp(line, "RESET") == 0))
+    {
+        WiFi_ParseSocketData(line);
+        return;
+    }
+
+    if(strstr(line, prefix) == line)
+    {
+        data_ptr = line + strlen(prefix);
+        if(ParseU16(data_ptr, &con_id_value) != 0)
+        {
+            con_id = (u8)con_id_value;
+        }
+
         data_ptr = line;
         while(*data_ptr != '\0')
         {
@@ -293,10 +384,15 @@ static void WiFi_ProcessLine(const char *line)
                 {
                     data_ptr++;
                     WiFi_ParseSocketData(data_ptr);
-                    break;
+                    return;
                 }
             }
             data_ptr++;
+        }
+
+        if(con_id != 0)
+        {
+            WiFi_RequestSocketRead(con_id);
         }
     }
 }
@@ -625,6 +721,7 @@ static void Security_RequestMute(SecurityState_t *state)
     state->silenced = 1;
     Zigbee_SendCommand(ZIGBEE_CMD_SILENT, sizeof(ZIGBEE_CMD_SILENT));
     WiFi_ReportEvent(state, "MUTE");
+    WiFi_ReportStatus(state);
 }
 
 static void Security_RequestReset(SecurityState_t *state)
@@ -633,6 +730,7 @@ static void Security_RequestReset(SecurityState_t *state)
     state->silenced = 0;
     Zigbee_SendCommand(ZIGBEE_CMD_RESET, sizeof(ZIGBEE_CMD_RESET));
     WiFi_ReportEvent(state, "RESET");
+    WiFi_ReportStatus(state);
 }
 
 static void Security_HandleCommands(SecurityState_t *state)
