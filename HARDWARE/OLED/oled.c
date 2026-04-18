@@ -1,17 +1,13 @@
 #include "oled.h"
 #include "delay.h"
+#include <stdio.h>
 
-/* 原理图对应关系：
- * OLED_SCL -> PA12
- * OLED_SDA -> PA11
- */
 #define OLED_SCL_GPIO   GPIOA
 #define OLED_SCL_PIN    GPIO_Pin_12
 
 #define OLED_SDA_GPIO   GPIOA
 #define OLED_SDA_PIN    GPIO_Pin_11
 
-/* 常见 SSD1306 I2C 地址（SA0=0 时） */
 #define OLED_ADDR       0x78
 
 static void OLED_SCL_Set(u8 val)
@@ -52,7 +48,6 @@ static void OLED_IIC_Stop(void)
     OLED_IIC_Delay();
 }
 
-/* 第一版先不严格读 ACK，直接给时钟继续走 */
 static void OLED_IIC_WaitAck(void)
 {
     OLED_SDA_Set(1);
@@ -88,7 +83,7 @@ static void OLED_WriteCmd(u8 cmd)
     OLED_IIC_Start();
     OLED_IIC_WriteByte(OLED_ADDR);
     OLED_IIC_WaitAck();
-    OLED_IIC_WriteByte(0x00);   /* 控制字节：后面是命令 */
+    OLED_IIC_WriteByte(0x00);
     OLED_IIC_WaitAck();
     OLED_IIC_WriteByte(cmd);
     OLED_IIC_WaitAck();
@@ -100,7 +95,7 @@ static void OLED_WriteData(u8 data)
     OLED_IIC_Start();
     OLED_IIC_WriteByte(OLED_ADDR);
     OLED_IIC_WaitAck();
-    OLED_IIC_WriteByte(0x40);   /* 控制字节：后面是数据 */
+    OLED_IIC_WriteByte(0x40);
     OLED_IIC_WaitAck();
     OLED_IIC_WriteByte(data);
     OLED_IIC_WaitAck();
@@ -116,7 +111,8 @@ static void OLED_SetPos(u8 x, u8 page)
 
 void OLED_Clear(void)
 {
-    u8 page, col;
+    u8 page;
+    u8 col;
 
     for(page = 0; page < 8; page++)
     {
@@ -128,7 +124,17 @@ void OLED_Clear(void)
     }
 }
 
-/* 只做本项目够用的小字库：空格、-、:、D、L、0~9 */
+static void OLED_ClearLine(u8 page)
+{
+    u8 col;
+
+    OLED_SetPos(0, page);
+    for(col = 0; col < 128; col++)
+    {
+        OLED_WriteData(0x00);
+    }
+}
+
 static void OLED_ShowChar6x8(u8 x, u8 page, char ch)
 {
     u8 i;
@@ -138,20 +144,36 @@ static void OLED_ShowChar6x8(u8 x, u8 page, char ch)
     static const u8 font_minus[6] = {0x08,0x08,0x08,0x08,0x08,0x00};
     static const u8 font_colon[6] = {0x00,0x36,0x36,0x00,0x00,0x00};
 
-    static const u8 font_A[6]     = {0x7E,0x09,0x09,0x09,0x7E,0x00};
-    static const u8 font_D[6]     = {0x7F,0x41,0x41,0x22,0x1C,0x00};
-    static const u8 font_L[6]     = {0x7F,0x40,0x40,0x40,0x40,0x00};
+    static const u8 font_A[6] = {0x7E,0x11,0x11,0x11,0x7E,0x00};
+    static const u8 font_C[6] = {0x3E,0x41,0x41,0x41,0x22,0x00};
+    static const u8 font_D[6] = {0x7F,0x41,0x41,0x22,0x1C,0x00};
+    static const u8 font_E[6] = {0x7F,0x49,0x49,0x49,0x41,0x00};
+    static const u8 font_F[6] = {0x7F,0x09,0x09,0x09,0x01,0x00};
+    static const u8 font_G[6] = {0x3E,0x41,0x49,0x49,0x7A,0x00};
+    static const u8 font_H[6] = {0x7F,0x08,0x08,0x08,0x7F,0x00};
+    static const u8 font_I[6] = {0x00,0x41,0x7F,0x41,0x00,0x00};
+    static const u8 font_K[6] = {0x7F,0x08,0x14,0x22,0x41,0x00};
+    static const u8 font_L[6] = {0x7F,0x40,0x40,0x40,0x40,0x00};
+    static const u8 font_M[6] = {0x7F,0x02,0x0C,0x02,0x7F,0x00};
+    static const u8 font_N[6] = {0x7F,0x04,0x08,0x10,0x7F,0x00};
+    static const u8 font_O[6] = {0x3E,0x41,0x41,0x41,0x3E,0x00};
+    static const u8 font_R[6] = {0x7F,0x09,0x19,0x29,0x46,0x00};
+    static const u8 font_S[6] = {0x46,0x49,0x49,0x49,0x31,0x00};
+    static const u8 font_T[6] = {0x01,0x01,0x7F,0x01,0x01,0x00};
+    static const u8 font_U[6] = {0x3F,0x40,0x40,0x40,0x3F,0x00};
+    static const u8 font_W[6] = {0x7F,0x20,0x18,0x20,0x7F,0x00};
+    static const u8 font_Y[6] = {0x07,0x08,0x70,0x08,0x07,0x00};
 
-    static const u8 font_0[6]     = {0x3E,0x51,0x49,0x45,0x3E,0x00};
-    static const u8 font_1[6]     = {0x00,0x42,0x7F,0x40,0x00,0x00};
-    static const u8 font_2[6]     = {0x42,0x61,0x51,0x49,0x46,0x00};
-    static const u8 font_3[6]     = {0x21,0x41,0x45,0x4B,0x31,0x00};
-    static const u8 font_4[6]     = {0x18,0x14,0x12,0x7F,0x10,0x00};
-    static const u8 font_5[6]     = {0x27,0x45,0x45,0x45,0x39,0x00};
-    static const u8 font_6[6]     = {0x3C,0x4A,0x49,0x49,0x30,0x00};
-    static const u8 font_7[6]     = {0x01,0x71,0x09,0x05,0x03,0x00};
-    static const u8 font_8[6]     = {0x36,0x49,0x49,0x49,0x36,0x00};
-    static const u8 font_9[6]     = {0x06,0x49,0x49,0x29,0x1E,0x00};
+    static const u8 font_0[6] = {0x3E,0x51,0x49,0x45,0x3E,0x00};
+    static const u8 font_1[6] = {0x00,0x42,0x7F,0x40,0x00,0x00};
+    static const u8 font_2[6] = {0x42,0x61,0x51,0x49,0x46,0x00};
+    static const u8 font_3[6] = {0x21,0x41,0x45,0x4B,0x31,0x00};
+    static const u8 font_4[6] = {0x18,0x14,0x12,0x7F,0x10,0x00};
+    static const u8 font_5[6] = {0x27,0x45,0x45,0x45,0x39,0x00};
+    static const u8 font_6[6] = {0x3C,0x4A,0x49,0x49,0x30,0x00};
+    static const u8 font_7[6] = {0x01,0x71,0x09,0x05,0x03,0x00};
+    static const u8 font_8[6] = {0x36,0x49,0x49,0x49,0x36,0x00};
+    static const u8 font_9[6] = {0x06,0x49,0x49,0x29,0x1E,0x00};
 
     switch(ch)
     {
@@ -159,8 +181,24 @@ static void OLED_ShowChar6x8(u8 x, u8 page, char ch)
         case '-': p = font_minus; break;
         case ':': p = font_colon; break;
         case 'A': p = font_A; break;
+        case 'C': p = font_C; break;
         case 'D': p = font_D; break;
+        case 'E': p = font_E; break;
+        case 'F': p = font_F; break;
+        case 'G': p = font_G; break;
+        case 'H': p = font_H; break;
+        case 'I': p = font_I; break;
+        case 'K': p = font_K; break;
         case 'L': p = font_L; break;
+        case 'M': p = font_M; break;
+        case 'N': p = font_N; break;
+        case 'O': p = font_O; break;
+        case 'R': p = font_R; break;
+        case 'S': p = font_S; break;
+        case 'T': p = font_T; break;
+        case 'U': p = font_U; break;
+        case 'W': p = font_W; break;
+        case 'Y': p = font_Y; break;
         case '0': p = font_0; break;
         case '1': p = font_1; break;
         case '2': p = font_2; break;
@@ -191,96 +229,63 @@ static void OLED_ShowStr6x8(u8 x, u8 page, const char *str)
     }
 }
 
-static void OLED_Show3Digit(u8 x, u8 page, u16 num)
+static void OLED_ShowTextLine(u8 page, const char *text)
 {
-    u8 hundreds, tens, ones;
-
-    if(num > 999) num = 999;
-
-    hundreds = num / 100;
-    tens     = (num / 10) % 10;
-    ones     = num % 10;
-
-    if(hundreds == 0) OLED_ShowChar6x8(x,      page, ' ');
-    else              OLED_ShowChar6x8(x,      page, hundreds + '0');
-
-    if((hundreds == 0) && (tens == 0)) OLED_ShowChar6x8(x + 6,  page, ' ');
-    else                               OLED_ShowChar6x8(x + 6,  page, tens + '0');
-
-    OLED_ShowChar6x8(x + 12, page, ones + '0');
-}
-
-static void OLED_Show4Digit(u8 x, u8 page, u16 num)
-{
-    u8 thousands, hundreds, tens, ones;
-
-    if(num > 9999) num = 9999;
-
-    thousands = num / 1000;
-    hundreds  = (num / 100) % 10;
-    tens      = (num / 10) % 10;
-    ones      = num % 10;
-
-    if(thousands == 0) OLED_ShowChar6x8(x,      page, ' ');
-    else               OLED_ShowChar6x8(x,      page, thousands + '0');
-
-    if((thousands == 0) && (hundreds == 0)) OLED_ShowChar6x8(x + 6,  page, ' ');
-    else                                    OLED_ShowChar6x8(x + 6,  page, hundreds + '0');
-
-    if((thousands == 0) && (hundreds == 0) && (tens == 0))
-        OLED_ShowChar6x8(x + 12, page, ' ');
-    else
-        OLED_ShowChar6x8(x + 12, page, tens + '0');
-
-    OLED_ShowChar6x8(x + 18, page, ones + '0');
-}
-
-static void OLED_ShowDash3(u8 x, u8 page)
-{
-    OLED_ShowChar6x8(x,      page, '-');
-    OLED_ShowChar6x8(x + 6,  page, '-');
-    OLED_ShowChar6x8(x + 12, page, '-');
+    OLED_ClearLine(page);
+    OLED_ShowStr6x8(0, page, text);
 }
 
 void OLED_ShowStatus(u16 distance_cm, u8 level)
 {
-    /* 第1行：D:xxx */
-    OLED_ShowStr6x8(0, 0, "D:");
-    if(distance_cm == 0xFFFF) OLED_ShowDash3(18, 0);
-    else                      OLED_Show3Digit(18, 0, distance_cm);
+    char line[22];
 
-    /* 清掉后面残留 */
-    OLED_ShowStr6x8(36, 0, "      ");
+    if(distance_cm == 0xFFFF) sprintf(line, "D:---");
+    else                      sprintf(line, "D:%3uCM", distance_cm);
+    OLED_ShowTextLine(0, line);
 
-    /* 第3行：L:x */
-    OLED_ShowStr6x8(0, 2, "L:");
-    if(level <= 9) OLED_ShowChar6x8(18, 2, level + '0');
-    else           OLED_ShowChar6x8(18, 2, '-');
-
-    OLED_ShowStr6x8(24, 2, "      ");
+    sprintf(line, "L:%u", level);
+    OLED_ShowTextLine(2, line);
 }
 
 void OLED_ShowLightStatus(u16 light_raw, u8 level)
 {
-    /* 第1行：A:xxxx */
-    OLED_ShowStr6x8(0, 0, "A:");
-    OLED_Show4Digit(18, 0, light_raw);
+    char line[22];
 
-    /* 清掉后面残留 */
-    OLED_ShowStr6x8(42, 0, "    ");
+    sprintf(line, "A:%4u", light_raw);
+    OLED_ShowTextLine(0, line);
 
-    /* 第3行：L:x */
-    OLED_ShowStr6x8(0, 2, "L:");
-    if((level >= 1) && (level <= 3))
+    sprintf(line, "L:%u", level);
+    OLED_ShowTextLine(2, line);
+}
+
+void OLED_ShowSecurityStatus(u16 distance_cm, u8 is_night, u8 alarm_state, u8 wifi_connected, u8 silenced)
+{
+    char line[22];
+
+    if(distance_cm == 0xFFFF) sprintf(line, "D:---");
+    else                      sprintf(line, "D:%3uCM", distance_cm);
+    OLED_ShowTextLine(0, line);
+
+    if(is_night) OLED_ShowTextLine(2, "N:NIGHT");
+    else         OLED_ShowTextLine(2, "N:DAY");
+
+    switch(alarm_state)
     {
-        OLED_ShowChar6x8(18, 2, level + '0');
-    }
-    else
-    {
-        OLED_ShowChar6x8(18, 2, '-');
+        case 1:
+            OLED_ShowTextLine(4, "A:WARN");
+            break;
+
+        case 2:
+            OLED_ShowTextLine(4, "A:ALRM");
+            break;
+
+        default:
+            OLED_ShowTextLine(4, "A:SAFE");
+            break;
     }
 
-    OLED_ShowStr6x8(24, 2, "      ");
+    sprintf(line, "W:%s M:%s", wifi_connected ? "ON" : "OFF", silenced ? "ON" : "OFF");
+    OLED_ShowTextLine(6, line);
 }
 
 void OLED_Init(void)
@@ -290,7 +295,7 @@ void OLED_Init(void)
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA, ENABLE);
 
     GPIO_InitStructure.GPIO_Pin = OLED_SCL_PIN | OLED_SDA_PIN;
-    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_OD;   /* 软件I2C，开漏输出 */
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_Out_OD;
     GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPIOA, &GPIO_InitStructure);
 
@@ -299,7 +304,7 @@ void OLED_Init(void)
 
     delay_ms(100);
 
-    OLED_WriteCmd(0xAE);   /* display off */
+    OLED_WriteCmd(0xAE);
     OLED_WriteCmd(0xD5);
     OLED_WriteCmd(0x80);
     OLED_WriteCmd(0xA8);
@@ -310,7 +315,7 @@ void OLED_Init(void)
     OLED_WriteCmd(0x8D);
     OLED_WriteCmd(0x14);
     OLED_WriteCmd(0x20);
-    OLED_WriteCmd(0x02);   /* page addressing mode */
+    OLED_WriteCmd(0x02);
     OLED_WriteCmd(0xA1);
     OLED_WriteCmd(0xC8);
     OLED_WriteCmd(0xDA);
@@ -323,7 +328,7 @@ void OLED_Init(void)
     OLED_WriteCmd(0x20);
     OLED_WriteCmd(0xA4);
     OLED_WriteCmd(0xA6);
-    OLED_WriteCmd(0xAF);   /* display on */
+    OLED_WriteCmd(0xAF);
 
     OLED_Clear();
 }

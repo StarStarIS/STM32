@@ -31,3 +31,4 @@
 .\objects\oled.o: ..\FWLIB\inc\misc.h
 .\objects\oled.o: ..\SYSTEM\delay\delay.h
 .\objects\oled.o: ..\SYSTEM\sys\sys.h
+.\objects\oled.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h

@@ -35,9 +35,29 @@ u16 USART_RX_STA = 0;
 volatile u8 USART2_RX_BUF[USART2_REC_LEN];
 volatile u16 USART2_RX_CNT = 0;
 
+static volatile u8 USART2_RING_BUF[USART2_RING_LEN];
+static volatile u16 USART2_RING_WR = 0;
+static volatile u16 USART2_RING_RD = 0;
+
 static volatile u8 USART2_DEBUG_BUF[USART2_DEBUG_REC_LEN];
 static volatile u16 USART2_DEBUG_WR = 0;
 static volatile u16 USART2_DEBUG_RD = 0;
+
+static void USART2_RingPushByte(u8 ch)
+{
+    u16 next = USART2_RING_WR + 1;
+
+    if(next >= USART2_RING_LEN)
+    {
+        next = 0;
+    }
+
+    if(next != USART2_RING_RD)
+    {
+        USART2_RING_BUF[USART2_RING_WR] = ch;
+        USART2_RING_WR = next;
+    }
+}
 
 static void USART2_DebugPushByte(u8 ch)
 {
@@ -102,10 +122,31 @@ void USART2_ClearBuf(void)
     u16 i;
 
     USART2_RX_CNT = 0;
+    USART2_RING_WR = 0;
+    USART2_RING_RD = 0;
     for(i = 0; i < USART2_REC_LEN; i++)
     {
         USART2_RX_BUF[i] = 0;
     }
+}
+
+u8 USART2_ReadByte(u8 *ch)
+{
+    u16 next;
+
+    if((ch == 0) || (USART2_RING_RD == USART2_RING_WR))
+    {
+        return 0;
+    }
+
+    *ch = USART2_RING_BUF[USART2_RING_RD];
+    next = USART2_RING_RD + 1;
+    if(next >= USART2_RING_LEN)
+    {
+        next = 0;
+    }
+    USART2_RING_RD = next;
+    return 1;
 }
 
 void USART2_SendByte(u8 ch)
@@ -114,7 +155,7 @@ void USART2_SendByte(u8 ch)
     USART_SendData(USART2, ch);
 }
 
-void USART2_SendString(char *str)
+void USART2_SendString(const char *str)
 {
     while(*str)
     {
@@ -197,6 +238,55 @@ void uart2_init(u32 bound)
     USART2_DEBUG_RD = 0;
 }
 
+void uart4_init(u32 bound)
+{
+    GPIO_InitTypeDef GPIO_InitStructure;
+    USART_InitTypeDef USART_InitStructure;
+
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOC, ENABLE);
+    RCC_APB1PeriphClockCmd(RCC_APB1Periph_UART4, ENABLE);
+
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_10;
+    GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF_PP;
+    GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+    GPIO_InitStructure.GPIO_Pin = GPIO_Pin_11;
+    GPIO_InitStructure.GPIO_Mode = GPIO_Mode_IN_FLOATING;
+    GPIO_Init(GPIOC, &GPIO_InitStructure);
+
+    USART_InitStructure.USART_BaudRate = bound;
+    USART_InitStructure.USART_WordLength = USART_WordLength_8b;
+    USART_InitStructure.USART_StopBits = USART_StopBits_1;
+    USART_InitStructure.USART_Parity = USART_Parity_No;
+    USART_InitStructure.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
+    USART_InitStructure.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
+
+    USART_Init(UART4, &USART_InitStructure);
+    USART_Cmd(UART4, ENABLE);
+}
+
+void UART4_SendByte(u8 ch)
+{
+    while(USART_GetFlagStatus(UART4, USART_FLAG_TXE) == RESET);
+    USART_SendData(UART4, ch);
+}
+
+void UART4_SendBytes(const u8 *data, u16 len)
+{
+    u16 i;
+
+    if(data == 0)
+    {
+        return;
+    }
+
+    for(i = 0; i < len; i++)
+    {
+        UART4_SendByte(data[i]);
+    }
+}
+
 #if EN_USART1_RX
 void USART1_IRQHandler(void)
 {
@@ -268,6 +358,7 @@ void USART2_IRQHandler(void)
             USART2_RX_CNT = 0;
         }
 
+        USART2_RingPushByte(Res);
         USART2_DebugPushByte(Res);
     }
 }

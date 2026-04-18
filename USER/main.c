@@ -8,202 +8,345 @@
 #include "oled.h"
 #include "light.h"
 #include "usart.h"
-#include "dht11.h"
 #include <stdio.h>
 #include <string.h>
 
 typedef enum
 {
-    MODE_IDLE = 0,
-    MODE_REVERSE
-} SystemMode_t;
+    ENV_DAY = 0,
+    ENV_NIGHT
+} EnvironmentMode_t;
 
-#define WIFI_USE_EN_PIN      1
-#define WIFI_START_DELAY_S   10
-#define WIFI_SSID            "StarIS Xiaomi 17 Pro"
-#define WIFI_PASSWORD        "1234abcd"
-#define WIFI_SERVER_IP       "10.160.155.95"
-#define WIFI_SERVER_PORT     9080
-
-static u8 GetAlarmLevel(u16 distance_cm)
+typedef enum
 {
-    if((distance_cm == HCSR04_INVALID_DISTANCE) || (distance_cm > 100))
+    ALARM_NONE = 0,
+    ALARM_WARN,
+    ALARM_INTRUSION
+} AlarmState_t;
+
+typedef struct
+{
+    u16 distance_cm;
+    u16 light_raw;
+    EnvironmentMode_t env_mode;
+    AlarmState_t alarm_state;
+    u8 wifi_online;
+    u8 silenced;
+} SecurityState_t;
+
+#define WIFI_USE_EN_PIN                1
+#define WIFI_SSID                      "StarIS Xiaomi 17 Pro"
+#define WIFI_PASSWORD                  "1234abcd"
+#define WIFI_SERVER_IP                 "10.160.155.95"
+#define WIFI_SERVER_PORT               9080
+#define WIFI_CON_ID                    1
+
+#define DETECT_PERIOD_MS               2000
+#define LOOP_DELAY_MS                  50
+#define WIFI_RETRY_PERIOD_MS           15000
+#define LIGHT_NIGHT_ENTER_THRESHOLD    700
+#define LIGHT_DAY_ENTER_THRESHOLD      600
+#define DISTANCE_OUTLIER_CM            50
+
+#define DAY_WARN_THRESHOLD_CM          200
+#define DAY_ALARM_THRESHOLD_CM         100
+#define NIGHT_WARN_THRESHOLD_CM        250
+#define NIGHT_ALARM_THRESHOLD_CM       150
+
+#define CC2530_UART_BAUD               115200
+
+static const u8 ZIGBEE_CMD_WARN[]    = {0x3A, 0x10, 0xFF, 0x01, 0x01, 0x23};
+static const u8 ZIGBEE_CMD_INTRUDE[] = {0x3A, 0x10, 0xFF, 0x01, 0x02, 0x23};
+static const u8 ZIGBEE_CMD_SILENT[]  = {0x3A, 0x11, 0xFF, 0x00, 0x23};
+static const u8 ZIGBEE_CMD_RESET[]   = {0x3A, 0x10, 0xFF, 0x01, 0x00, 0x23};
+
+static u8  g_wifi_joined = 0;
+static u8  g_wifi_socket_connected = 0;
+static u8  g_remote_mute_req = 0;
+static u8  g_remote_reset_req = 0;
+static char g_wifi_rx_line[160];
+static u16 g_wifi_rx_line_len = 0;
+
+static u16 AbsDiffU16(u16 a, u16 b)
+{
+    return (a > b) ? (a - b) : (b - a);
+}
+
+static const char *EnvToString(EnvironmentMode_t env_mode)
+{
+    if(env_mode == ENV_NIGHT)
     {
-        return 0;
+        return "NIGHT";
     }
-    else if(distance_cm > 50)
+
+    return "DAY";
+}
+
+static const char *AlarmToString(AlarmState_t alarm_state)
+{
+    switch(alarm_state)
     {
-        return 1;
-    }
-    else if(distance_cm > 20)
-    {
-        return 2;
-    }
-    else
-    {
-        return 3;
+        case ALARM_WARN:
+            return "WARN";
+
+        case ALARM_INTRUSION:
+            return "INTRUSION";
+
+        default:
+            return "SAFE";
     }
 }
 
-static void ReverseAlarm_ByDistance(u16 distance_cm)
+static u8 ToUpperAscii(u8 ch)
 {
-    if((distance_cm == HCSR04_INVALID_DISTANCE) || (distance_cm > 100))
+    if((ch >= 'a') && (ch <= 'z'))
     {
-        LED_AllOff();
-        LED_G_On();
-        BUZZER_Off();
-        delay_ms(80);
+        ch = (u8)(ch - 'a' + 'A');
     }
-    else if(distance_cm > 50)
-    {
-        LED_AllOff();
-        LED_B_On();
 
-        BUZZER_On();
-        delay_ms(60);
-        BUZZER_Off();
-        delay_ms(440);
-    }
-    else if(distance_cm > 20)
-    {
-        LED_AllOff();
-        LED_R_On();
-
-        BUZZER_On();
-        delay_ms(80);
-        BUZZER_Off();
-        delay_ms(170);
-    }
-    else
-    {
-        LED_AllOn();
-        BUZZER_On();
-        delay_ms(80);
-    }
+    return ch;
 }
 
-static u8 GetLightLevel(u16 light_raw)
-{
-    if(light_raw > 750)
-    {
-        return 1;
-    }
-    else if(light_raw >= 400)
-    {
-        return 2;
-    }
-    else
-    {
-        return 3;
-    }
-}
-
-static void LightLevel_Indicate(u8 level)
+static void LocalIndicator_Update(const SecurityState_t *state)
 {
     LED_AllOff();
     BUZZER_Off();
 
-    switch(level)
+    switch(state->alarm_state)
     {
-        case 1:
-            LED_R_On();
-            break;
-
-        case 2:
-            LED_G_On();
-            break;
-
-        case 3:
+        case ALARM_WARN:
             LED_B_On();
             break;
 
+        case ALARM_INTRUSION:
+            LED_R_On();
+            break;
+
         default:
+            LED_G_On();
             break;
     }
 }
 
-static u8 WiFi_BufferHas(const char *keyword)
+static void Display_Update(const SecurityState_t *state)
 {
-    if(keyword == 0)
+    OLED_ShowSecurityStatus(state->distance_cm,
+                            (state->env_mode == ENV_NIGHT) ? 1 : 0,
+                            (u8)state->alarm_state,
+                            state->wifi_online,
+                            state->silenced);
+}
+
+static void Display_UpdateIfNeeded(const SecurityState_t *state)
+{
+    static SecurityState_t last_state = {0xFFFF, 0xFFFF, (EnvironmentMode_t)0xFF, (AlarmState_t)0xFF, 0xFF, 0xFF};
+
+    if((state->distance_cm != last_state.distance_cm) ||
+       (state->env_mode != last_state.env_mode) ||
+       (state->alarm_state != last_state.alarm_state) ||
+       (state->wifi_online != last_state.wifi_online) ||
+       (state->silenced != last_state.silenced))
+    {
+        Display_Update(state);
+        last_state = *state;
+    }
+}
+
+static void Zigbee_SendCommand(const u8 *cmd, u16 len)
+{
+    UART4_SendBytes(cmd, len);
+}
+
+static void Zigbee_ApplyAlarm(AlarmState_t alarm_state, u8 silenced)
+{
+    switch(alarm_state)
+    {
+        case ALARM_WARN:
+            Zigbee_SendCommand(ZIGBEE_CMD_WARN, sizeof(ZIGBEE_CMD_WARN));
+            if(silenced != 0)
+            {
+                Zigbee_SendCommand(ZIGBEE_CMD_SILENT, sizeof(ZIGBEE_CMD_SILENT));
+            }
+            break;
+
+        case ALARM_INTRUSION:
+            Zigbee_SendCommand(ZIGBEE_CMD_INTRUDE, sizeof(ZIGBEE_CMD_INTRUDE));
+            if(silenced != 0)
+            {
+                Zigbee_SendCommand(ZIGBEE_CMD_SILENT, sizeof(ZIGBEE_CMD_SILENT));
+            }
+            break;
+
+        default:
+            Zigbee_SendCommand(ZIGBEE_CMD_RESET, sizeof(ZIGBEE_CMD_RESET));
+            break;
+    }
+}
+
+static u8 WiFi_TryGetLine(char *line, u16 line_len)
+{
+    u8 ch;
+
+    if((line == 0) || (line_len == 0))
     {
         return 0;
     }
 
-    return (strstr((char *)USART2_RX_BUF, keyword) != 0);
-}
-
-static void WiFi_PrintLastReply(const char *stage)
-{
-    printf("\r\n[%s reply]\r\n%s\r\n", stage, (char *)USART2_RX_BUF);
-}
-
-static void WiFi_DelayWithDebug(u32 total_ms)
-{
-    u32 elapsed = 0;
-
-    while(elapsed < total_ms)
+    while(USART2_ReadByte(&ch))
     {
-        USART2_DebugFlushToUSART1();
-        delay_ms(10);
-        elapsed += 10;
-    }
-
-    USART2_DebugFlushToUSART1();
-}
-
-static void WiFi_SendCmd(const char *cmd)
-{
-    USART2_ClearBuf();
-    USART2_DebugFlushToUSART1();
-    printf("\r\n[STM32->WiFi] %s", cmd);
-    USART2_SendString((char *)cmd);
-}
-
-static u8 WiFi_WaitFor(const char *keyword, u32 timeout_ms)
-{
-    u32 t = 0;
-
-    while(t < timeout_ms)
-    {
-        USART2_DebugFlushToUSART1();
-
-        if(WiFi_BufferHas(keyword))
+        if(ch == '\r')
         {
+            continue;
+        }
+
+        if(ch == '\n')
+        {
+            if(g_wifi_rx_line_len == 0)
+            {
+                continue;
+            }
+
+            g_wifi_rx_line[g_wifi_rx_line_len] = '\0';
+            strncpy(line, g_wifi_rx_line, line_len - 1);
+            line[line_len - 1] = '\0';
+            g_wifi_rx_line_len = 0;
             return 1;
         }
 
-        delay_ms(10);
-        t += 10;
+        if(g_wifi_rx_line_len < (sizeof(g_wifi_rx_line) - 1))
+        {
+            g_wifi_rx_line[g_wifi_rx_line_len++] = (char)ch;
+        }
+        else
+        {
+            g_wifi_rx_line_len = 0;
+        }
     }
 
-    USART2_DebugFlushToUSART1();
     return 0;
+}
+
+static void WiFi_ParseSocketData(const char *data)
+{
+    char cmd[24];
+    u8 i = 0;
+
+    while((*data == ' ') || (*data == '\t'))
+    {
+        data++;
+    }
+
+    while((*data != '\0') && (*data != ',') && (*data != ' ') && (*data != '\t') && (i < (sizeof(cmd) - 1)))
+    {
+        cmd[i++] = (char)ToUpperAscii((u8)*data);
+        data++;
+    }
+    cmd[i] = '\0';
+
+    if(strcmp(cmd, "MUTE") == 0)
+    {
+        g_remote_mute_req = 1;
+    }
+    else if(strcmp(cmd, "RESET") == 0)
+    {
+        g_remote_reset_req = 1;
+    }
+}
+
+static void WiFi_ProcessLine(const char *line)
+{
+    const char *data_ptr = 0;
+    u8 comma_cnt = 0;
+
+    if((line == 0) || (line[0] == '\0'))
+    {
+        return;
+    }
+
+    printf("[WiFi] %s\r\n", line);
+
+    if(strstr(line, "WIFI_GOT_IP") != 0)
+    {
+        g_wifi_joined = 1;
+    }
+
+    if(strstr(line, "connect success ConID=1") != 0)
+    {
+        g_wifi_socket_connected = 1;
+    }
+
+    if((strstr(line, "WIFI_DISCONNECT") != 0) || (strstr(line, "+EVENT:SocketDissconnect") != 0))
+    {
+        g_wifi_joined = 0;
+        g_wifi_socket_connected = 0;
+    }
+
+    if(strstr(line, "+EVENT:SocketDown,") == line)
+    {
+        data_ptr = line;
+        while(*data_ptr != '\0')
+        {
+            if(*data_ptr == ',')
+            {
+                comma_cnt++;
+                if(comma_cnt == 3)
+                {
+                    data_ptr++;
+                    WiFi_ParseSocketData(data_ptr);
+                    break;
+                }
+            }
+            data_ptr++;
+        }
+    }
+}
+
+static void WiFi_Service(void)
+{
+    char line[160];
+
+    while(WiFi_TryGetLine(line, sizeof(line)))
+    {
+        WiFi_ProcessLine(line);
+    }
 }
 
 static u8 WiFi_WaitForAny(u32 timeout_ms, const char *keyword1, const char *keyword2, const char *keyword3)
 {
-    u32 t = 0;
+    char line[160];
+    u32 elapsed = 0;
 
-    while(t < timeout_ms)
+    while(elapsed < timeout_ms)
     {
-        USART2_DebugFlushToUSART1();
-
-        if(WiFi_BufferHas(keyword1) || WiFi_BufferHas(keyword2) || WiFi_BufferHas(keyword3))
+        while(WiFi_TryGetLine(line, sizeof(line)))
         {
-            return 1;
-        }
+            WiFi_ProcessLine(line);
 
-        if(WiFi_BufferHas("ERROR") || WiFi_BufferHas("+CME ERROR"))
-        {
-            return 0;
+            if(((keyword1 != 0) && (strstr(line, keyword1) != 0)) ||
+               ((keyword2 != 0) && (strstr(line, keyword2) != 0)) ||
+               ((keyword3 != 0) && (strstr(line, keyword3) != 0)))
+            {
+                return 1;
+            }
+
+            if((strstr(line, "ERROR") != 0) || (strstr(line, "+CME ERROR") != 0))
+            {
+                return 0;
+            }
         }
 
         delay_ms(10);
-        t += 10;
+        elapsed += 10;
     }
 
-    USART2_DebugFlushToUSART1();
     return 0;
+}
+
+static u8 WiFi_SendATExpectAny(const char *cmd, u32 timeout_ms, const char *keyword1, const char *keyword2, const char *keyword3)
+{
+    printf("[STM32->WiFi] %s", cmd);
+    USART2_SendString(cmd);
+    return WiFi_WaitForAny(timeout_ms, keyword1, keyword2, keyword3);
 }
 
 static u8 WiFi_CheckATReady(void)
@@ -212,54 +355,26 @@ static u8 WiFi_CheckATReady(void)
 
     for(try_cnt = 0; try_cnt < 5; try_cnt++)
     {
-        WiFi_SendCmd("AT\r\n");
-        if(WiFi_WaitForAny(1200, "OK", "ready", 0))
-        {
-            printf("\r\nAT OK\r\n");
-            return 1;
-        }
-
-        WiFi_DelayWithDebug(300);
-    }
-
-    printf("\r\nAT no response!\r\n");
-    WiFi_PrintLastReply("AT");
-    return 0;
-}
-
-static u8 WiFi_WaitForGotIP(u32 timeout_ms)
-{
-    u32 t = 0;
-
-    while(t < timeout_ms)
-    {
-        USART2_DebugFlushToUSART1();
-
-        if(WiFi_BufferHas("WIFI_GOT_IP"))
+        if(WiFi_SendATExpectAny("AT\r\n", 1200, "OK", "ready", 0))
         {
             return 1;
         }
-
-        if(WiFi_BufferHas("WIFI_DISCONNECT") || WiFi_BufferHas("ERROR") || WiFi_BufferHas("+CME ERROR"))
-        {
-            return 0;
-        }
-
-        delay_ms(10);
-        t += 10;
+        delay_ms(200);
     }
 
-    USART2_DebugFlushToUSART1();
     return 0;
 }
 
-static u8 WiFi_Init_And_Send12345(void)
+static u8 WiFi_Connect(void)
 {
     char cmd[128];
 
-    printf("\r\n===== WiFi Start =====\r\n");
-    printf("SSID  : %s\r\n", WIFI_SSID);
-    printf("Server: %s:%d\r\n", WIFI_SERVER_IP, WIFI_SERVER_PORT);
+    printf("\r\n===== WiFi Init =====\r\n");
+
+    g_wifi_joined = 0;
+    g_wifi_socket_connected = 0;
+    g_wifi_rx_line_len = 0;
+    USART2_ClearBuf();
 
 #if WIFI_USE_EN_PIN
     WiFi_EN_Init();
@@ -267,93 +382,334 @@ static u8 WiFi_Init_And_Send12345(void)
     delay_ms(200);
     WiFi_EN_On();
 #endif
-    WiFi_DelayWithDebug(2000);
+    delay_ms(1500);
 
     if(!WiFi_CheckATReady())
     {
+        printf("WiFi AT no response\r\n");
         return 0;
     }
 
-    WiFi_SendCmd("AT+WMODE=1,1\r\n");
-    if(!WiFi_WaitFor("OK", 1000))
+    if(!WiFi_SendATExpectAny("AT+WMODE=1,1\r\n", 1500, "OK", 0, 0))
     {
-        printf("\r\nWMODE failed!\r\n");
-        WiFi_PrintLastReply("WMODE");
+        printf("AT+WMODE failed\r\n");
         return 0;
     }
-    printf("\r\nWMODE OK\r\n");
+
+    if(!WiFi_SendATExpectAny("AT+SOCKETRECVCFG=1\r\n", 1500, "OK", 0, 0))
+    {
+        printf("AT+SOCKETRECVCFG failed\r\n");
+        return 0;
+    }
 
     sprintf(cmd, "AT+WJAP=\"%s\",\"%s\"\r\n", WIFI_SSID, WIFI_PASSWORD);
-    WiFi_SendCmd(cmd);
-    if(!WiFi_WaitForAny(15000, "WIFI_CONNECT", "WIFI_GOT_IP", "OK"))
+    if(!WiFi_SendATExpectAny(cmd, 15000, "WIFI_CONNECT", "WIFI_GOT_IP", "OK"))
     {
-        printf("\r\nWJAP no response!\r\n");
-        WiFi_PrintLastReply("WJAP");
-        return 0;
-    }
-    if(WiFi_BufferHas("ERROR") || WiFi_BufferHas("+CME ERROR"))
-    {
-        printf("\r\nWJAP command failed!\r\n");
-        WiFi_PrintLastReply("WJAP");
-        return 0;
-    }
-    printf("\r\nWJAP accepted, wait for IP...\r\n");
-
-    if(!WiFi_WaitForGotIP(25000))
-    {
-        printf("\r\nWIFI connect failed!\r\n");
-        printf("Please check SSID/password, hotspot status, and whether the module can see this hotspot.\r\n");
-        WiFi_PrintLastReply("WJAP");
-        return 0;
-    }
-    printf("\r\nWiFi connected\r\n");
-
-    sprintf(cmd, "AT+SOCKET=4,%s,%d,0,1\r\n", WIFI_SERVER_IP, WIFI_SERVER_PORT);
-    WiFi_SendCmd(cmd);
-    if(!WiFi_WaitForAny(5000, "connect success", "ConID=1", 0))
-    {
-        printf("\r\nSOCKET create failed!\r\n");
-        WiFi_PrintLastReply("SOCKET");
-        return 0;
-    }
-    printf("\r\nSOCKET connected\r\n");
-
-    WiFi_SendCmd("AT+SOCKETSENDLINE=1,5,12345\r\n");
-    if(!WiFi_WaitFor("OK", 3000))
-    {
-        printf("\r\nSend 12345 failed!\r\n");
-        WiFi_PrintLastReply("SOCKETSENDLINE");
+        printf("AT+WJAP failed\r\n");
         return 0;
     }
 
-    printf("\r\nSend 12345 success!\r\n");
-    printf("\r\n===== WiFi Done =====\r\n");
+    if((g_wifi_joined == 0) && (!WiFi_WaitForAny(12000, "WIFI_GOT_IP", 0, 0)))
+    {
+        printf("WiFi join timeout\r\n");
+        return 0;
+    }
+
+    sprintf(cmd, "AT+SOCKET=4,%s,%d,0,%d\r\n", WIFI_SERVER_IP, WIFI_SERVER_PORT, WIFI_CON_ID);
+    if(!WiFi_SendATExpectAny(cmd, 5000, "connect success", "ConID=1", 0))
+    {
+        printf("AT+SOCKET failed\r\n");
+        return 0;
+    }
+
+    g_wifi_joined = 1;
+    g_wifi_socket_connected = 1;
+    printf("WiFi online\r\n");
     return 1;
 }
 
-static void Boot_WaitBeforeWiFi(void)
+static u8 WiFi_SendSocketLine(const char *payload)
 {
-    u8 sec;
+    char cmd[200];
+    u16 len;
 
-    printf("\r\nPower-on delay: wait %d s before WiFi start.\r\n", WIFI_START_DELAY_S);
-
-    for(sec = WIFI_START_DELAY_S; sec > 0; sec--)
+    if((payload == 0) || (g_wifi_socket_connected == 0))
     {
-        printf("WiFi starts in %d s\r\n", sec);
-        delay_ms(1000);
+        return 0;
     }
+
+    len = (u16)strlen(payload);
+    sprintf(cmd, "AT+SOCKETSENDLINE=%d,%u,%s\r\n", WIFI_CON_ID, len, payload);
+
+    if(!WiFi_SendATExpectAny(cmd, 3000, "OK", 0, 0))
+    {
+        g_wifi_socket_connected = 0;
+        return 0;
+    }
+
+    return 1;
+}
+
+static void WiFi_ReportStatus(const SecurityState_t *state)
+{
+    char payload[128];
+    char distance_text[8];
+
+    if(state->distance_cm == HCSR04_INVALID_DISTANCE)
+    {
+        strcpy(distance_text, "---");
+    }
+    else
+    {
+        sprintf(distance_text, "%u", state->distance_cm);
+    }
+
+    sprintf(payload,
+            "STATUS,D=%s,ENV=%s,ALARM=%s,MUTE=%u",
+            distance_text,
+            EnvToString(state->env_mode),
+            AlarmToString(state->alarm_state),
+            state->silenced);
+    WiFi_SendSocketLine(payload);
+}
+
+static void WiFi_ReportEvent(const SecurityState_t *state, const char *event_name)
+{
+    char payload[128];
+    char distance_text[8];
+
+    if(state->distance_cm == HCSR04_INVALID_DISTANCE)
+    {
+        strcpy(distance_text, "---");
+    }
+    else
+    {
+        sprintf(distance_text, "%u", state->distance_cm);
+    }
+
+    sprintf(payload,
+            "EVENT,%s,D=%s,ENV=%s,ALARM=%s",
+            event_name,
+            distance_text,
+            EnvToString(state->env_mode),
+            AlarmToString(state->alarm_state));
+    WiFi_SendSocketLine(payload);
+}
+
+static EnvironmentMode_t Security_UpdateEnvMode(u16 light_raw, EnvironmentMode_t last_mode)
+{
+    if(last_mode == ENV_NIGHT)
+    {
+        if(light_raw <= LIGHT_DAY_ENTER_THRESHOLD)
+        {
+            return ENV_DAY;
+        }
+
+        return ENV_NIGHT;
+    }
+
+    if(light_raw >= LIGHT_NIGHT_ENTER_THRESHOLD)
+    {
+        return ENV_NIGHT;
+    }
+
+    return ENV_DAY;
+}
+
+static AlarmState_t Security_CalcAlarmState(u16 distance_cm, EnvironmentMode_t env_mode)
+{
+    u16 warn_threshold;
+    u16 alarm_threshold;
+
+    if(distance_cm == HCSR04_INVALID_DISTANCE)
+    {
+        return ALARM_NONE;
+    }
+
+    if(env_mode == ENV_NIGHT)
+    {
+        warn_threshold = NIGHT_WARN_THRESHOLD_CM;
+        alarm_threshold = NIGHT_ALARM_THRESHOLD_CM;
+    }
+    else
+    {
+        warn_threshold = DAY_WARN_THRESHOLD_CM;
+        alarm_threshold = DAY_ALARM_THRESHOLD_CM;
+    }
+
+    if(distance_cm < alarm_threshold)
+    {
+        return ALARM_INTRUSION;
+    }
+
+    if(distance_cm <= warn_threshold)
+    {
+        return ALARM_WARN;
+    }
+
+    return ALARM_NONE;
+}
+
+static u16 Ultrasonic_ReadFilteredDistance(void)
+{
+    u16 sample[3];
+    u8 valid[3] = {0, 0, 0};
+    u8 i;
+    u8 valid_cnt = 0;
+    u32 sum = 0;
+    u16 d01;
+    u16 d02;
+    u16 d12;
+
+    for(i = 0; i < 3; i++)
+    {
+        sample[i] = HCSR04_GetDistanceCm();
+        if(sample[i] != HCSR04_INVALID_DISTANCE)
+        {
+            valid[i] = 1;
+            valid_cnt++;
+        }
+
+        if(i < 2)
+        {
+            delay_ms(60);
+        }
+    }
+
+    if(valid_cnt == 0)
+    {
+        return HCSR04_INVALID_DISTANCE;
+    }
+
+    if(valid_cnt == 3)
+    {
+        d01 = AbsDiffU16(sample[0], sample[1]);
+        d02 = AbsDiffU16(sample[0], sample[2]);
+        d12 = AbsDiffU16(sample[1], sample[2]);
+
+        if((d01 <= DISTANCE_OUTLIER_CM) && (d02 > DISTANCE_OUTLIER_CM) && (d12 > DISTANCE_OUTLIER_CM))
+        {
+            valid[2] = 0;
+            valid_cnt = 2;
+        }
+        else if((d02 <= DISTANCE_OUTLIER_CM) && (d01 > DISTANCE_OUTLIER_CM) && (d12 > DISTANCE_OUTLIER_CM))
+        {
+            valid[1] = 0;
+            valid_cnt = 2;
+        }
+        else if((d12 <= DISTANCE_OUTLIER_CM) && (d01 > DISTANCE_OUTLIER_CM) && (d02 > DISTANCE_OUTLIER_CM))
+        {
+            valid[0] = 0;
+            valid_cnt = 2;
+        }
+    }
+
+    for(i = 0; i < 3; i++)
+    {
+        if(valid[i] != 0)
+        {
+            sum += sample[i];
+        }
+    }
+
+    return (u16)(sum / valid_cnt);
+}
+
+static void Security_RequestMute(SecurityState_t *state)
+{
+    if((state->alarm_state == ALARM_NONE) || (state->silenced != 0))
+    {
+        return;
+    }
+
+    state->silenced = 1;
+    Zigbee_SendCommand(ZIGBEE_CMD_SILENT, sizeof(ZIGBEE_CMD_SILENT));
+    WiFi_ReportEvent(state, "MUTE");
+}
+
+static void Security_RequestReset(SecurityState_t *state)
+{
+    state->alarm_state = ALARM_NONE;
+    state->silenced = 0;
+    Zigbee_SendCommand(ZIGBEE_CMD_RESET, sizeof(ZIGBEE_CMD_RESET));
+    WiFi_ReportEvent(state, "RESET");
+}
+
+static void Security_HandleCommands(SecurityState_t *state)
+{
+    u8 key_value;
+
+    key_value = KEY_Scan();
+    if(key_value == KEY1_PRESS)
+    {
+        Security_RequestMute(state);
+    }
+    else if(key_value == KEY2_PRESS)
+    {
+        Security_RequestReset(state);
+    }
+
+    if(g_remote_mute_req != 0)
+    {
+        g_remote_mute_req = 0;
+        Security_RequestMute(state);
+    }
+
+    if(g_remote_reset_req != 0)
+    {
+        g_remote_reset_req = 0;
+        Security_RequestReset(state);
+    }
+}
+
+static void Security_RunCycle(SecurityState_t *state)
+{
+    AlarmState_t last_alarm_state;
+    AlarmState_t next_alarm_state;
+
+    last_alarm_state = state->alarm_state;
+
+    state->light_raw = LIGHT_ReadAverage(8);
+    state->env_mode = Security_UpdateEnvMode(state->light_raw, state->env_mode);
+    state->distance_cm = Ultrasonic_ReadFilteredDistance();
+    next_alarm_state = Security_CalcAlarmState(state->distance_cm, state->env_mode);
+
+    if(next_alarm_state != last_alarm_state)
+    {
+        state->alarm_state = next_alarm_state;
+
+        if(next_alarm_state == ALARM_NONE)
+        {
+            state->silenced = 0;
+        }
+
+        Zigbee_ApplyAlarm(state->alarm_state, state->silenced);
+
+        if(state->alarm_state == ALARM_NONE)
+        {
+            WiFi_ReportEvent(state, "CLEAR");
+        }
+        else
+        {
+            WiFi_ReportEvent(state, "TRIGGER");
+        }
+    }
+
+    printf("Distance=%u cm, Light=%u, Env=%s, Alarm=%s, Mute=%u\r\n",
+           state->distance_cm,
+           state->light_raw,
+           EnvToString(state->env_mode),
+           AlarmToString(state->alarm_state),
+           state->silenced);
+
+    WiFi_ReportStatus(state);
 }
 
 int main(void)
 {
-    u8 key_value = KEY_NONE;
-    u8 temperature = 0;
-    u8 humidity = 0;
-    u8 dht11_send_div = 0;
-    u16 distance_cm = HCSR04_INVALID_DISTANCE;
-    u16 light_raw = 0;
-    u8 light_level = 0;
-    SystemMode_t mode = MODE_IDLE;
+    SecurityState_t state;
+    u16 detect_elapsed_ms = DETECT_PERIOD_MS;
+    u16 wifi_retry_elapsed_ms = 0;
 
     delay_init();
 
@@ -365,77 +721,50 @@ int main(void)
     LIGHT_Init();
     uart_init(115200);
     uart2_init(115200);
-    delay_ms(500);
-    DHT11_Init();
-    Boot_WaitBeforeWiFi();
-    WiFi_Init_And_Send12345();
+    uart4_init(CC2530_UART_BAUD);
 
-    LED_AllOff();
-    BUZZER_Off();
-    OLED_ShowLightStatus(0, 0);
+    memset(&state, 0, sizeof(state));
+    state.distance_cm = HCSR04_INVALID_DISTANCE;
+    state.env_mode = ENV_DAY;
+    state.alarm_state = ALARM_NONE;
+    state.wifi_online = 0;
+    state.silenced = 0;
 
-    delay_ms(1200);
-    printf("System Ready\r\n");
+    LocalIndicator_Update(&state);
+    Display_Update(&state);
+
+    delay_ms(300);
+    WiFi_Connect();
+    state.wifi_online = g_wifi_socket_connected;
+    Display_UpdateIfNeeded(&state);
+
+    printf("Security system ready\r\n");
 
     while(1)
     {
-        USART2_DebugFlushToUSART1();
-        key_value = KEY_Scan();
+        WiFi_Service();
+        Security_HandleCommands(&state);
 
-        if(key_value == KEY1_PRESS)
+        state.wifi_online = g_wifi_socket_connected;
+
+        if(detect_elapsed_ms >= DETECT_PERIOD_MS)
         {
-            if(mode == MODE_IDLE)
-            {
-                mode = MODE_REVERSE;
-            }
-            else
-            {
-                mode = MODE_IDLE;
-            }
-
-            LED_AllOff();
-            BUZZER_Off();
+            detect_elapsed_ms = 0;
+            Security_RunCycle(&state);
         }
 
-        switch(mode)
+        if((state.wifi_online == 0) && (wifi_retry_elapsed_ms >= WIFI_RETRY_PERIOD_MS))
         {
-            case MODE_IDLE:
-                light_raw = LIGHT_ReadAverage(8);
-                light_level = GetLightLevel(light_raw);
-
-                LightLevel_Indicate(light_level);
-                OLED_ShowLightStatus(light_raw, light_level);
-
-                dht11_send_div++;
-                if(dht11_send_div >= 10)
-                {
-                    dht11_send_div = 0;
-
-                    if(DHT11_ReadData(&temperature, &humidity) == DHT11_OK)
-                    {
-                        printf("Temp: %dC, Humi: %d%%\r\n", temperature, humidity);
-                    }
-                    else
-                    {
-                        printf("DHT11 read fail\r\n");
-                    }
-                }
-
-                delay_ms(100);
-                break;
-
-            case MODE_REVERSE:
-                distance_cm = HCSR04_GetDistanceCm();
-                OLED_ShowStatus(distance_cm, GetAlarmLevel(distance_cm));
-                ReverseAlarm_ByDistance(distance_cm);
-                break;
-
-            default:
-                mode = MODE_IDLE;
-                LED_AllOff();
-                BUZZER_Off();
-                OLED_ShowStatus(HCSR04_INVALID_DISTANCE, 0);
-                break;
+            wifi_retry_elapsed_ms = 0;
+            WiFi_Connect();
+            state.wifi_online = g_wifi_socket_connected;
         }
+
+        LocalIndicator_Update(&state);
+        Display_UpdateIfNeeded(&state);
+
+        delay_ms(LOOP_DELAY_MS);
+        detect_elapsed_ms += LOOP_DELAY_MS;
+        wifi_retry_elapsed_ms += LOOP_DELAY_MS;
     }
 }
